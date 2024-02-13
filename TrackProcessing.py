@@ -7,7 +7,6 @@ Original file is located at
     https://colab.research.google.com/drive/1ZdjZCGC3pz7eRY5BhQjVtWyrTOliZxDS
 """
 
-
 import pandas as pd
 import numpy as np
 import jsonlines
@@ -22,6 +21,7 @@ from scipy.stats import mode
 from sklearn.cluster import KMeans
 from nba_api.stats.static import teams
 from nba_api.stats.endpoints import commonteamroster
+import joblib
 
 def get_team_id(team_abbrev):
   return teams.find_team_by_abbreviation(team_abbrev)['id']
@@ -41,16 +41,31 @@ def compute_center(x1, y1, x2, y2):
 def get_rgb_data(json_out):
   rgb_dict = []
   track_nums = []
+  center_x = []
+  center_y = []
+  frame_num = []
+
   for item in json_out.keys():
     if item != "META":
       for i in range(len(json_out[item]["R"])):
         R = json_out[item]["R"][i]
         G = json_out[item]["G"][i]
         B = json_out[item]["B"][i]
-        track_nums.append(item)
+
         rgb_dict.append([R, G, B])
 
-  return rgb_dict, track_nums
+        track_nums.append(item)
+        c_x, c_y = compute_center(
+                      json_out[item]["X1"][i],
+                      json_out[item]["Y1"][i],
+                      json_out[item]["X2"][i],
+                      json_out[item]["Y2"][i]
+                    )
+        center_x.append(c_x)
+        center_y.append(c_y)
+        frame_num.append(i)
+
+  return rgb_dict, track_nums, center_x, center_y, frame_num
 
 def cluster_rgb_data(data, n_clusters):
   colors = np.array(data)
@@ -81,15 +96,18 @@ def visualize_clusters(data, clusters, n_clusters):
   plt.show()
 
 def process_colors(json_out, n_clusters):
-  rgb_data, track_nums = get_rgb_data(json_out)
+  rgb_data, track_nums, center_x, center_y, frame_num = get_rgb_data(json_out)
   clusters, model = cluster_rgb_data(rgb_data, n_clusters)
 
   #visualize_clusters(rgb_data, clusters, n_clusters)
   rgb_output_data = pd.DataFrame(np.array(rgb_data), columns=["R", "G", "B"])
   rgb_output_data["CLUSTER"] = clusters
   rgb_output_data["TRACK_NUM"] = track_nums
+  rgb_output_data["X"] = center_x
+  rgb_output_data["Y"] = center_y
+  rgb_output_data["FRAME_NUM"] = frame_num
 
-  return rgb_output_data, model.cluster_centers_
+  return rgb_output_data, model.cluster_centers_, model
 
 def get_color_labels(color1, color2):
     # Display colors using matplotlib
@@ -112,14 +130,19 @@ def associate_team_with_cluster(data, centers):
 
   return out_df
 
-def compute_centers_for_tracks(x1_list, y1_list, x2_list, y2_list):
-  x = []
-  y = []
-  for i in range(len(x1_list)):
-    center_x, center_y = compute_center(x1_list[i], y1_list[i], x2_list[i], y2_list[i])
-    x.append(center_x)
-    y.append(center_y)
-  return x, y
+def get_track_teams(json_out, title, save_kmeans_model=False):
+  data, centers, model = process_colors(json_out, 2)
+  out = associate_team_with_cluster(data, centers)
+  out = associate_track_with_team(out)
+
+  if save_kmeans_model:
+    joblib.dump(model, "kmeans_model_" + title + ".pkl")
+
+  return out
+
+def associate_track_with_team(df):
+  df['MODE_TEAM_ABBREV'] = df.groupby('TRACK_NUM')['TEAM_ABBREV'].transform(lambda x: x.mode().iloc[0])
+  return df
 
 def get_val_counts(list):
   data = pd.Series(list).value_counts()
@@ -237,6 +260,53 @@ def load_track_file(file_path):
 
   return json_data, title
 
+def calculate_iou(box1, box2):
+    """
+    Calculate Intersection over Union (IoU) between two bounding boxes.
+
+    Parameters:
+    - box1: Tuple (x1, y1, x2, y2) representing the coordinates of the first bounding box.
+    - box2: Tuple (x1, y1, x2, y2) representing the coordinates of the second bounding box.
+
+    Returns:
+    - IoU: Intersection over Union value.
+    """
+    # Calculate the coordinates of the intersection rectangle
+    x1_inter = max(box1[0], box2[0])
+    y1_inter = max(box1[1], box2[1])
+    x2_inter = min(box1[2], box2[2])
+    y2_inter = min(box1[3], box2[3])
+
+    # Calculate the area of intersection
+    intersection_area = max(0, x2_inter - x1_inter + 1) * max(0, y2_inter - y1_inter + 1)
+
+    # Calculate the area of the union
+    box1_area = (box1[2] - box1[0] + 1) * (box1[3] - box1[1] + 1)
+    box2_area = (box2[2] - box2[0] + 1) * (box2[3] - box2[1] + 1)
+    union_area = box1_area + box2_area - intersection_area
+
+    # Calculate IoU
+    iou = intersection_area / union_area
+
+    return iou
+
+def get_ten_longest_track_data(json_out):
+  longest_tracks = get_n_longest_tracks(json_out, 10)
+  out = {}
+  out["META"] = json_out["META"]
+
+  for i in longest_tracks.keys():
+    out[i] = longest_tracks[i]
+
+  return out
+
+def get_track_data(filename):
+  json_out, title = load_track_file(filename)
+  json_out = get_ten_longest_track_data(json_out)
+  track_df = get_track_teams(json_out, title)
+
+  return track_df, title
+
 def animate_dot_plotly(x_coordinates, y_coordinates, time_coordinates):
     # Create subplot
     fig = make_subplots(rows=1, cols=1, subplot_titles=['Animated Dot Plot'])
@@ -273,4 +343,40 @@ def animate_dot_plotly(x_coordinates, y_coordinates, time_coordinates):
 
     # Show the plot
     fig.show()
+
+def view_tracks(video_filename, video_out, track_df):
+  cap = cv2.VideoCapture(video_filename)
+  ret, frame = cap.read()
+  cap_out = cv2.VideoWriter(video_out, cv2.VideoWriter_fourcc(*'mp4v'), cap.get(cv2.CAP_PROP_FPS), (frame.shape[1], frame.shape[0]))
+
+  frame_num = 0
+  while ret:
+    frame_num += 1
+    frame_df = track_df[track_df["FRAME_NUM"] == frame_num]
+    for index, row in frame_df.iterrows():
+      point = (int(row["X"]), int(row["Y"]))
+      cv2.circle(frame, point, 5, (0, 0, 255), -1)
+
+      text = row["TEAM_ABBREV"] + ", " + str(row["TRACK_NUM"])
+      font = cv2.FONT_HERSHEY_SIMPLEX
+      font_scale = 0.8
+      text_color = (255, 255, 255)  # BGR color (white in this example)
+      text_thickness = 1
+
+      # Calculate the position for the text
+      text_position = (point[0] + 10, point[1] - 10)
+
+      # Draw the text on the frame
+      cv2.putText(frame, text, text_position, font, font_scale, text_color, text_thickness)
+    cv2.imshow('frame', frame)
+    cv2.waitKey(25)
+    cap_out.write(frame)
+    ret, frame = cap.read()
+
+  cap.release()
+  cap_out.release()
+  cv2.destroyAllWindows()
+
+track_data, title = get_track_data("test_json.json")
+view_tracks("Footage/Cavs/Offense/Thunder@Cavaliers_10-27-23_1Q_11꞉45.mp4", "out_2.mp4", track_data)
 

@@ -18,6 +18,8 @@ from sklearn.cluster import KMeans
 import json
 from tqdm import tqdm
 import gc
+import joblib
+
 #from inference_sdk import InferenceHTTPClient
 #import pytesseract
 #from google.colab.patches import cv2_imshow
@@ -83,6 +85,73 @@ def visual_tracking(video_path, video_out_path):
   cap.release()
   cap_out.release()
   cv2.destroyAllWindows()
+
+def track_with_color_labels(video_path, video_out_path, kmeans_model, cluster_one_label, cluster_two_label):
+    cap = cv2.VideoCapture(video_path)
+    ret, frame = cap.read()
+    cap_out = cv2.VideoWriter(video_out_path, cv2.VideoWriter_fourcc(*'MP4V'), cap.get(cv2.CAP_PROP_FPS), (frame.shape[1], frame.shape[0]))
+
+    model = YOLO("yolov8n.pt")
+    tracker = Tracker()
+
+    #10 players + 3 refs
+    colors = [(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)) for j in range(13)]
+
+    frame_num = 0
+    while ret:
+        frame_num += 1
+        results = model(frame)
+
+        for person in results:
+            detections = []
+            for r in person.boxes.data.tolist():
+                x1, y1, x2, y2, confidence, class_type = r
+                x1 = int(x1)
+                x2 = int(x2)
+                y1 = int(y1)
+                y2 = int(y2)
+                class_type = int(class_type)
+                detections.append([x1, y1, x2, y2, confidence])
+
+            tracker.update(frame, detections)
+
+            for track in tracker.tracks:
+
+                bbox = track.bbox
+                track_id = track.track_id
+                x1, y1, x2, y2 = bbox
+
+                #Extract jersey color
+                cent_x = int((x1 + x2) / 2)
+                cent_y = int((y1+y2) / 2)
+                pixel_color = frame[cent_y, cent_x]
+
+                R = int(pixel_color[2])
+                G = int(pixel_color[1])
+                B = int(pixel_color[0])
+                cluster = kmeans_model.predict(np.array([R, G, B]).reshape(1, -1))
+
+                if cluster == 0:
+                    team = cluster_one_label
+                elif cluster == 1:
+                    team = cluster_two_label
+                else:
+                    team = None
+                    
+
+                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (colors[track_id % len(colors)]))
+                #cv2.putText(frame, str(track_id),(int(x1), int(y1)),0, 5e-3 * 200, (colors[track_id % len(colors)]),2)
+                cv2.putText(frame, str(team),(int(x1), int(y1)),0, 5e-3 * 200, (colors[track_id % len(colors)]),2)
+
+
+        cv2.imshow('frame', frame)
+        cv2.waitKey(25)
+        cap_out.write(frame)
+        ret, frame = cap.read()
+
+    cap.release()
+    cap_out.release()
+    cv2.destroyAllWindows()
 
 def generate_tracking_data(filename, video_path):
     cap = cv2.VideoCapture(video_path + filename)
@@ -171,5 +240,8 @@ def generate_tracking_data(filename, video_path):
 
     return json_out
 
-json_out = generate_tracking_data("Thunder@Cavaliers_10-27-23_1Q_11꞉45.mp4", "Footage/Cavs/Offense/")
-dump_dict_to_json(json_out, "test_json.json")
+kmeans_model = joblib.load('kmeans_model.pkl')
+cluster_one_label = "OKC"
+cluster_two_label = "CLE"
+#track_with_color_labels("Footage/Cavs/Offense/Thunder@Cavaliers_10-27-23_1Q_11꞉45.mp4", "out.mp4", kmeans_model, cluster_one_label, cluster_two_label)
+visual_tracking("Footage/Cavs/Offense/Thunder@Cavaliers_10-27-23_1Q_11꞉45.mp4", "out1.mp4")
