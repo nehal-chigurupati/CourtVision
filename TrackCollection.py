@@ -239,9 +239,3 @@ def generate_tracking_data(filename, video_path):
     json_out["META"] = {"NUM_FRAMES_IN_VIDEO": num_frames}
 
     return json_out
-
-kmeans_model = joblib.load('kmeans_model.pkl')
-cluster_one_label = "OKC"
-cluster_two_label = "CLE"
-#track_with_color_labels("Footage/Cavs/Offense/Thunder@Cavaliers_10-27-23_1Q_11꞉45.mp4", "out.mp4", kmeans_model, cluster_one_label, cluster_two_label)
-visual_tracking("Footage/Cavs/Offense/Thunder@Cavaliers_10-27-23_1Q_11꞉45.mp4", "out1.mp4")

@@ -260,32 +260,20 @@ def load_track_file(file_path):
 
   return json_data, title
 
+#Intersection over union method for merging tracks
 def calculate_iou(box1, box2):
-    """
-    Calculate Intersection over Union (IoU) between two bounding boxes.
-
-    Parameters:
-    - box1: Tuple (x1, y1, x2, y2) representing the coordinates of the first bounding box.
-    - box2: Tuple (x1, y1, x2, y2) representing the coordinates of the second bounding box.
-
-    Returns:
-    - IoU: Intersection over Union value.
-    """
-    # Calculate the coordinates of the intersection rectangle
+    
     x1_inter = max(box1[0], box2[0])
     y1_inter = max(box1[1], box2[1])
     x2_inter = min(box1[2], box2[2])
     y2_inter = min(box1[3], box2[3])
 
-    # Calculate the area of intersection
     intersection_area = max(0, x2_inter - x1_inter + 1) * max(0, y2_inter - y1_inter + 1)
 
-    # Calculate the area of the union
     box1_area = (box1[2] - box1[0] + 1) * (box1[3] - box1[1] + 1)
     box2_area = (box2[2] - box2[0] + 1) * (box2[3] - box2[1] + 1)
     union_area = box1_area + box2_area - intersection_area
 
-    # Calculate IoU
     iou = intersection_area / union_area
 
     return iou
@@ -300,9 +288,11 @@ def get_ten_longest_track_data(json_out):
 
   return out
 
-def get_track_data(filename):
-  json_out, title = load_track_file(filename)
-  json_out = get_ten_longest_track_data(json_out)
+def get_track_data(json_out, restrict_ten_longest=False):
+  
+  if restrict_ten_longest:
+    json_out = get_ten_longest_track_data(json_out)
+
   track_df = get_track_teams(json_out, title)
 
   return track_df, title
@@ -377,6 +367,4 @@ def view_tracks(video_filename, video_out, track_df):
   cap_out.release()
   cv2.destroyAllWindows()
 
-track_data, title = get_track_data("test_json.json")
-view_tracks("Footage/Cavs/Offense/Thunder@Cavaliers_10-27-23_1Q_11꞉45.mp4", "out_2.mp4", track_data)
 
